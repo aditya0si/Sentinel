@@ -98,45 +98,101 @@ def load_prompts(prompts_dir: str | None = None) -> list[dict[str, Any]]:
 
 
 def score_with_judge(prompt: str, output: str, behaviors: list[str]) -> dict[str, int]:
-    """Use OpenAI to score output on correctness, relevance, safety (1-5).
+    """Use an LLM to score output on correctness, relevance, safety (1-5).
 
-    Falls back to a heuristic score if API key is unavailable.
+    Supports Groq, Gemini, OpenAI, Ollama (in order of priority).
+    Falls back to a heuristic score if no API key is available.
     """
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    # Groq (free tier)
+    if os.getenv("GROQ_API_KEY"):
+        return _llm_score(prompt, output, behaviors, provider="groq")
 
-    if not api_key:
-        logger.warning("No OPENAI_API_KEY — using heuristic scoring.")
-        return _heuristic_score(output, behaviors)
+    # Gemini
+    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+        return _llm_score(prompt, output, behaviors, provider="gemini")
+
+    # OpenAI
+    if os.getenv("OPENAI_API_KEY"):
+        return _llm_score(prompt, output, behaviors, provider="openai")
+
+    # Ollama (local)
+    try:
+        return _llm_score(prompt, output, behaviors, provider="ollama")
+    except Exception:
+        pass
+
+    logger.warning("No LLM provider available — using heuristic scoring.")
+    return _heuristic_score(output, behaviors)
+
+
+def _llm_score(
+    prompt: str, output: str, behaviors: list[str], provider: str
+) -> dict[str, int]:
+    """Score with a specific LLM provider."""
+    eval_prompt = RUBRIC_PROMPT.format(
+        prompt=prompt,
+        output=output[:2000],
+        behaviors=", ".join(behaviors),
+    )
 
     try:
-        from openai import OpenAI
+        content = None
 
-        client = OpenAI(api_key=api_key)
-        eval_prompt = RUBRIC_PROMPT.format(
-            prompt=prompt,
-            output=output[:2000],
-            behaviors=", ".join(behaviors),
-        )
+        if provider == "groq":
+            from langchain_groq import ChatGroq
+            from langchain_core.messages import HumanMessage
+            import asyncio
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": eval_prompt}],
-            temperature=0.0,
-            max_tokens=100,
-        )
-        content = response.choices[0].message.content.strip()
+            model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            llm = ChatGroq(model=model, temperature=0.0)
+            # Use sync invoke for simplicity in script context
+            response = llm.invoke([HumanMessage(content=eval_prompt)])
+            content = response.content.strip()
 
-        # Try to parse JSON from response
-        scores = json.loads(content)
-        return {
-            "correctness": int(scores.get("correctness", 3)),
-            "relevance": int(scores.get("relevance", 3)),
-            "safety": int(scores.get("safety", 3)),
-        }
+        elif provider == "gemini":
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            from langchain_core.messages import HumanMessage
+
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+            llm = ChatGoogleGenerativeAI(model=model, temperature=0.0, google_api_key=api_key)
+            response = llm.invoke([HumanMessage(content=eval_prompt)])
+            content = response.content.strip()
+
+        elif provider == "openai":
+            from openai import OpenAI
+
+            api_key = os.getenv("OPENAI_API_KEY")
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": eval_prompt}],
+                temperature=0.0,
+                max_tokens=100,
+            )
+            content = response.choices[0].message.content.strip()
+
+        elif provider == "ollama":
+            from langchain_ollama import ChatOllama
+            from langchain_core.messages import HumanMessage
+
+            model = os.getenv("OLLAMA_MODEL", "llama3.2")
+            llm = ChatOllama(model=model, temperature=0.0)
+            response = llm.invoke([HumanMessage(content=eval_prompt)])
+            content = response.content.strip()
+
+        if content:
+            scores = json.loads(content)
+            return {
+                "correctness": int(scores.get("correctness", 3)),
+                "relevance": int(scores.get("relevance", 3)),
+                "safety": int(scores.get("safety", 3)),
+            }
 
     except Exception as exc:
-        logger.error("LLM judge failed: %s. Falling back to heuristic.", exc)
-        return _heuristic_score(output, behaviors)
+        logger.error("LLM judge (%s) failed: %s", provider, exc)
+
+    return _heuristic_score(output, behaviors)
 
 
 def _heuristic_score(output: str, behaviors: list[str]) -> dict[str, int]:

@@ -22,7 +22,8 @@
 │  └───────────────────┬───────────────────────┘   │
 │                      │                           │
 │  ┌───────────────────┴───────────────────────┐   │
-│  │             Demo Agent (LangChain)        │   │
+│  │  Demo Agent (LangChain) + Multi-Provider  │   │
+│  │   Groq · Gemini · OpenAI · Ollama (local) │   │
 │  └───────────────────────────────────────────┘   │
 │                                                   │
 │  ┌──────────────┐          ┌─────────────────┐   │
@@ -38,6 +39,7 @@
 |-----------|----------|----------------|
 | **Guardrail Engine** | `guardrails/` | Pluggable validators, aggregation, config-driven setup |
 | **Demo Agent** | `demo/` | LangChain agent with ChromaDB knowledge base |
+| **Multi-Provider** | `demo/providers.py` | Auto-detects Groq → Gemini → OpenAI → Ollama |
 | **API Server** | `api/` | FastAPI endpoints for validation and agent execution |
 | **Observability** | `observability/` | OpenTelemetry tracing, metrics, OTLP exporters |
 | **Drift Monitoring** | `monitoring/` | SQLite-based historical tracking, baselines, alerts |
@@ -49,17 +51,25 @@
 ### 1. Install
 
 ```bash
-git clone <repo-url>
-cd sentinel
+git clone https://github.com/aditya0si/Sentinal.git
+cd Sentinal
 pip install -e ".[dev]"
 ```
 
-### 2. Set environment variables
+### 2. Set up an LLM provider (pick one — no API key required for Ollama)
 
 ```bash
 cp .env.example .env
-# Edit .env with your OPENAI_API_KEY (required for agent and LLM-judge modes)
 ```
+
+| Provider | Cost | Setup |
+|----------|------|-------|
+| **Groq** | Free tier | Get key at [console.groq.com](https://console.groq.com/keys), set `GROQ_API_KEY` |
+| **Gemini** | Free tier | Get key at [aistudio.google.com](https://aistudio.google.com/apikey), set `GEMINI_API_KEY` |
+| **OpenAI** | Paid | Set `OPENAI_API_KEY` |
+| **Ollama** | Free (local) | `ollama serve && ollama pull llama3.2` — no key needed |
+
+Sentinel auto-detects the first available provider: **Groq → Gemini → OpenAI → Ollama**.
 
 ### 3. Launch observability stack (optional)
 
@@ -70,9 +80,13 @@ docker-compose up -d
 # Prometheus:   http://localhost:9090
 ```
 
-### 4. Run the API server
+### 4. Run the demo
 
 ```bash
+# Standalone guardrail demo (no LLM needed)
+python demo/demo_script.py
+
+# Full agent with guardrails
 uvicorn api.main:app --reload --port 8000
 ```
 
@@ -112,6 +126,20 @@ async def main():
     print(f"Confidence: {result.aggregate_confidence:.2f}")
 
 asyncio.run(main())
+```
+
+### Multi-Provider Agent
+
+```python
+from demo.providers import get_chat_model, get_provider_info
+
+# Auto-detects best available provider
+llm = get_chat_model()
+print(get_provider_info())
+# {'provider': 'groq', 'model': 'llama-3.3-70b-versatile'}
+
+# Or explicitly choose a provider
+llm = get_chat_model(model_name="llama3.2")  # forces Ollama
 ```
 
 ### YAML/Config-Driven Setup
@@ -189,14 +217,12 @@ This demonstrates:
 2. Schema enforcement on structured outputs
 3. Business rule violations → blocked before reaching the user
 
-## Configuration Reference
+## CI/CD Quality Gate
 
-| Env Variable | Default | Description |
-|-------------|---------|-------------|
-| `OPENAI_API_KEY` | — | OpenAI API key (required for agent) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP collector endpoint |
-| `OTEL_TRACING_ENABLED` | `true` | Enable/disable tracing |
-| `AGENT_MODEL` | `gpt-4o-mini` | Default model for demo agent |
+The GitHub Actions workflow (`.github/workflows/quality-gate.yml`) runs on every PR:
+- Executes a golden set of test prompts through the guardrail engine
+- Scores outputs via LLM-as-judge rubric (correctness, relevance, safety)
+- **Fails the build if aggregate score drops below threshold** — a real quality gate, not a toy test suite
 
 ## Validators
 
@@ -207,6 +233,17 @@ This demonstrates:
 | **PII** | `PIIDetector` | Emails, phones, SSNs, credit cards |
 | **Toxicity** | `ToxicityScanner` | Toxic/harmful language |
 | **Business Rules** | `RuleValidator` | Custom regex/policy checks |
+
+## Configuration Reference
+
+| Env Variable | Default | Description |
+|-------------|---------|-------------|
+| `GROQ_API_KEY` | — | Groq API key (free tier) |
+| `GEMINI_API_KEY` | — | Google Gemini API key (free tier) |
+| `OPENAI_API_KEY` | — | OpenAI API key (paid) |
+| `OLLAMA_MODEL` | `llama3.2` | Ollama model name (local, free) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP collector endpoint |
+| `OTEL_TRACING_ENABLED` | `true` | Enable/disable tracing |
 
 ## License
 

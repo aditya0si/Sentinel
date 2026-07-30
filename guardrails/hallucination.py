@@ -39,7 +39,7 @@ class HallucinationChecker(Validator):
         self,
         mode: str = "embedding",
         threshold: float = 0.7,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str | None = None,
         openai_api_key: str | None = None,
     ) -> None:
         """Initialize the hallucination checker.
@@ -48,8 +48,8 @@ class HallucinationChecker(Validator):
             mode: "embedding" or "llm_judge".
             threshold: Minimum score to pass (0.0-1.0 for embedding, 1-5 for llm_judge).
             model_name: sentence-transformers model name (embedding mode) or
-                        OpenAI model name (llm_judge mode, e.g. "gpt-4o-mini").
-            openai_api_key: OpenAI API key for llm_judge mode.
+                        LLM model name (llm_judge mode). Auto-detected if None.
+            openai_api_key: OpenAI API key for llm_judge mode (legacy, prefer env vars).
         """
         self._mode = mode
         self._threshold = threshold
@@ -187,10 +187,10 @@ class HallucinationChecker(Validator):
             )
 
     async def _call_llm_judge(self, output: str, context_text: str) -> int:
-        """Call OpenAI to rate factual alignment on a 1-5 scale."""
-        if not self._openai_api_key:
-            raise ValueError("OPENAI_API_KEY not set for LLM judge mode.")
+        """Call an LLM to rate factual alignment on a 1-5 scale.
 
+        Supports multiple providers: Groq, Gemini, OpenAI, Ollama (in that order).
+        """
         prompt = (
             "You are a factual accuracy judge. Compare the following AI-generated output "
             "against the provided context documents. Rate how well the output is grounded "
@@ -205,21 +205,77 @@ class HallucinationChecker(Validator):
             'Respond with ONLY a single integer (1-5). Do not add any other text.'
         )
 
-        try:
-            from openai import AsyncOpenAI
+        # Try providers in order: Groq → Gemini → OpenAI → Ollama
+        rating_str = None
 
-            client = AsyncOpenAI(api_key=self._openai_api_key)
-            response = await client.chat.completions.create(
-                model=self._model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=5,
+        # Groq (free tier)
+        if os.getenv("GROQ_API_KEY") and rating_str is None:
+            try:
+                from langchain_groq import ChatGroq
+                from langchain_core.messages import HumanMessage
+
+                model = self._model_name or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+                llm = ChatGroq(model=model, temperature=0.0)
+                response = await llm.ainvoke([HumanMessage(content=prompt)])
+                rating_str = response.content.strip()
+            except Exception as exc:
+                logger.debug("Groq judge failed: %s", exc)
+
+        # Gemini
+        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if gemini_key and rating_str is None:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                from langchain_core.messages import HumanMessage
+
+                model = self._model_name or os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+                llm = ChatGoogleGenerativeAI(model=model, temperature=0.0, google_api_key=gemini_key)
+                response = await llm.ainvoke([HumanMessage(content=prompt)])
+                rating_str = response.content.strip()
+            except Exception as exc:
+                logger.debug("Gemini judge failed: %s", exc)
+
+        # OpenAI
+        if self._openai_api_key and rating_str is None:
+            try:
+                from openai import AsyncOpenAI
+
+                model = self._model_name or "gpt-4o-mini"
+                client = AsyncOpenAI(api_key=self._openai_api_key)
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    max_tokens=5,
+                )
+                rating_str = response.choices[0].message.content.strip()
+            except ImportError:
+                logger.debug("openai package not installed")
+            except Exception as exc:
+                logger.debug("OpenAI judge failed: %s", exc)
+
+        # Ollama (local fallback)
+        if rating_str is None:
+            try:
+                from langchain_ollama import ChatOllama
+                from langchain_core.messages import HumanMessage
+
+                model = self._model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
+                llm = ChatOllama(model=model, temperature=0.0)
+                response = await llm.ainvoke([HumanMessage(content=prompt)])
+                rating_str = response.content.strip()
+            except Exception as exc:
+                logger.debug("Ollama judge failed: %s", exc)
+
+        if rating_str is None:
+            raise ValueError(
+                "No LLM provider available for judge mode. "
+                "Set GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or run Ollama."
             )
-            rating_str = response.choices[0].message.content.strip()
+
+        try:
             rating = int(rating_str)
             return max(1, min(5, rating))
-        except ImportError:
-            raise ImportError("openai package required for LLM judge mode. pip install openai")
         except ValueError:
             logger.warning("LLM judge returned non-integer rating: %r", rating_str)
             return 3  # neutral fallback

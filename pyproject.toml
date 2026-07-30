@@ -6,9 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0,<3.0",
     "langchain>=0.2.0",
-    "langchain-openai>=0.1.0",
     "langchain-chroma>=0.1.0",
-    "openai>=1.0.0",
     "chromadb>=0.5.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
@@ -30,6 +28,26 @@ dev = [
     "ruff>=0.3.0",
     "black>=24.0",
 ]
+groq = [
+    "langchain-groq>=0.1.0",
+]
+gemini = [
+    "langchain-google-genai>=1.0.0",
+]
+openai-provider = [
+    "langchain-openai>=0.1.0",
+    "openai>=1.0.0",
+]
+ollama = [
+    "langchain-ollama>=0.1.0",
+]
+providers = [
+    "langchain-groq>=0.1.0",
+    "langchain-google-genai>=1.0.0",
+    "langchain-openai>=0.1.0",
+    "openai>=1.0.0",
+    "langchain-ollama>=0.1.0",
+]
 hallucination = [
     "sentence-transformers>=2.7.0",
 ]
@@ -49,6 +67,11 @@ all-optional = [
     "spacy>=3.7.0",
     "transformers>=4.40.0",
     "torch>=2.2.0",
+    "langchain-groq>=0.1.0",
+    "langchain-google-genai>=1.0.0",
+    "langchain-openai>=0.1.0",
+    "openai>=1.0.0",
+    "langchain-ollama>=0.1.0",
 ]
 
 [tool.setuptools.packages.find]

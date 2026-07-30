@@ -15,8 +15,8 @@ from langchain_core.tools import tool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_openai import ChatOpenAI
 
+from demo.providers import get_chat_model, get_embeddings_model, get_provider_info
 from guardrails.engine import GuardrailEngine, GuardrailResult
 from guardrails.safety import PIIDetector, ToxicityScanner
 
@@ -120,9 +120,8 @@ def knowledge_lookup(query: str) -> str:
     """
     try:
         from langchain_chroma import Chroma
-        from langchain_openai import OpenAIEmbeddings
 
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        embeddings = get_embeddings_model()
         persist_dir = os.path.join(os.path.dirname(__file__), "..", "chroma_data")
 
         if not os.path.exists(persist_dir):
@@ -180,21 +179,17 @@ class GuardedAgent:
         self,
         engine: GuardrailEngine,
         llm: BaseChatModel | None = None,
-        model_name: str = "gpt-4o-mini",
+        model_name: str | None = None,
     ) -> None:
         """Initialize the guarded agent.
 
         Args:
             engine: A configured GuardrailEngine to validate outputs.
-            llm: Optional LangChain chat model. If None, uses OpenAI gpt-4o-mini.
-            model_name: OpenAI model name (used if llm is None).
+            llm: Optional LangChain chat model. If None, auto-detects best provider.
+            model_name: Override the default model for the detected provider.
         """
         self._engine = engine
-        self._llm = llm or ChatOpenAI(
-            model=model_name,
-            temperature=0.3,
-            api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
-        )
+        self._llm = llm or get_chat_model(model_name=model_name)
 
         agent = create_tool_calling_agent(
             llm=self._llm,
