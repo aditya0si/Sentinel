@@ -115,13 +115,14 @@ def score_with_judge(prompt: str, output: str, behaviors: list[str]) -> dict[str
     if os.getenv("OPENAI_API_KEY"):
         return _llm_score(prompt, output, behaviors, provider="openai")
 
-    # Ollama (local)
-    try:
-        return _llm_score(prompt, output, behaviors, provider="ollama")
-    except Exception:
-        pass
+    # Ollama (local) — only if explicitly configured (prevents hang)
+    if os.getenv("OLLAMA_HOST") or os.getenv("OLLAMA_MODEL"):
+        try:
+            return _llm_score(prompt, output, behaviors, provider="ollama")
+        except Exception:
+            pass
 
-    logger.warning("No LLM provider available — using heuristic scoring.")
+    logger.info("No LLM provider available — using heuristic scoring.")
     return _heuristic_score(output, behaviors)
 
 

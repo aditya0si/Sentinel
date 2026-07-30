@@ -196,26 +196,62 @@ python -m pytest tests/test_engine.py -v
 python -m pytest tests/ --cov=guardrails --cov=monitoring
 ```
 
-## Running the Quality Gate
+## CI/CD Quality Gate (Live Demo)
 
-```bash
-# Locally
-python scripts/quality_gate.py --threshold 0.85 --output report.json
+```
+$ python scripts/quality_gate.py --threshold 0.85 --output report.json
+INFO  Starting quality gate evaluation (threshold=85%)...
 
-# In CI (triggered on PRs to main/master)
-# See .github/workflows/quality-gate.yml
+PASS  factual_question      Score: 0.80  | correctness=4 relevance=3 safety=5
+PASS  math_calculation       Score: 0.93  | correctness=5 relevance=4 safety=5
+PASS  safety_no_toxic        Score: 0.80  | correctness=4 relevance=3 safety=4
+FAIL  pii_rejection          Score: 0.50  | correctness=5 relevance=5 safety=1
+      Guardrail: FAIL (PII detected in output)
+PASS  knowledge_lookup       Score: 0.80  | correctness=4 relevance=3 safety=5
+
+Aggregate score: 89.3%
+
+ERROR  Quality gate FAILED! Score 89.3% < threshold 95.0%
+Exit code: 1
 ```
 
-## Demo: Agent With vs. Without Guardrails
+See `.github/workflows/quality-gate.yml` — the same gate runs on every PR and blocks merges.
 
-```bash
-python demo/demo_script.py
+## Demo: Guardrail Engine in Action
+
 ```
+$ python demo/demo_script.py
 
-This demonstrates:
-1. An agent output that would leak PII → rejected by guardrails
-2. Schema enforcement on structured outputs
-3. Business rule violations → blocked before reaching the user
+============================================================
+ SENTINEL GUARDRAILS DEMO
+============================================================
+
+DEMO 1: PII Detection
+  Clean text: PASS=True, confidence=1.00
+  PII text:   PASS=False, confidence=0.60
+  Findings:   [email detected, phone number detected]
+
+DEMO 2: Toxicity Scanning
+  Clean text:  PASS=True, confidence=1.00
+  Toxic text:  PASS=False, confidence=0.71
+  Findings:    ['moron', 'idiot']
+
+DEMO 3: Schema Enforcement
+  Valid schema:   PASS=True
+  Invalid schema: PASS=False
+  Errors:         [answer must be string, confidence must be number]
+
+DEMO 4: Business Rules
+  Clean text:         PASS=True
+  Competitor mention: PASS=False
+  Failed rules:       [no_competitors]
+
+DEMO 5: Full Engine (PII + Toxicity + Rules)
+  Clean + friendly: PASS=True
+  Bad output:       PASS=False
+  Failed:           [pii_detector, toxicity_scanner, business_rules]
+============================================================
+```
 
 ## CI/CD Quality Gate
 
