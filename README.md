@@ -51,8 +51,8 @@
 ### 1. Install
 
 ```bash
-git clone https://github.com/aditya0si/Sentinal.git
-cd Sentinal
+git clone https://github.com/aditya0si/Sentinel.git
+cd Sentinel
 pip install -e ".[dev]"
 ```
 
