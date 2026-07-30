@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: sentinel-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8888:8888"   # Prometheus metrics (internal)
+      - "8889:8889"   # Prometheus exporter
+    depends_on:
+      - jaeger
+      - prometheus
+    restart: unless-stopped
+
+  # Jaeger — distributed tracing UI
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: sentinel-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "16685:16685"  # gRPC query (internal)
+    volumes:
+      - jaeger_data:/badger
+    restart: unless-stopped
+
+  # Prometheus — metrics storage
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sentinel-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  # Grafana — dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sentinel-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  jaeger_data:
+  prometheus_data:
+  grafana_data:

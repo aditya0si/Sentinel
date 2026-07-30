@@ -1,0 +1,89 @@
+name: Sentinel Quality Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+  QUALITY_THRESHOLD: 0.85  # Minimum aggregate score to pass (0.0 - 1.0)
+
+jobs:
+  quality-gate:
+    name: Quality Gate Evaluation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/ --tb=short --timeout=60
+
+      - name: Run golden set evaluation
+        id: eval
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python scripts/quality_gate.py --threshold ${{ env.QUALITY_THRESHOLD }} --output report.json
+
+      - name: Check quality threshold
+        run: |
+          if [ -f report.json ]; then
+            SCORE=$(python -c "import json; print(json.load(open('report.json')).get('aggregate_score', 0))")
+            echo "Aggregate score: $SCORE"
+            echo "Threshold: ${{ env.QUALITY_THRESHOLD }}"
+
+            if (( $(echo "$SCORE < ${{ env.QUALITY_THRESHOLD }}" | bc -l) )); then
+              echo "❌ Quality gate FAILED! Score $SCORE < threshold ${{ env.QUALITY_THRESHOLD }}"
+              exit 1
+            else
+              echo "✅ Quality gate PASSED! Score $SCORE >= threshold ${{ env.QUALITY_THRESHOLD }}"
+            fi
+          else
+            echo "❌ Evaluation did not produce report.json. Quality gate FAILED — check the evaluation step for errors."
+            exit 1
+          fi
+
+      - name: Post quality report as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('report.json')) {
+              const report = JSON.parse(fs.readFileSync('report.json', 'utf8'));
+              const body = `## Sentinel Quality Gate Report
+
+            **Aggregate Score**: ${(report.aggregate_score * 100).toFixed(1)}%
+
+            **Prompt Results**:
+            | # | Prompt | Score | Passed |
+            |---|--------|-------|--------|
+            ${report.results.map((r, i) => `| ${i + 1} | ${r.prompt_name} | ${(r.score * 100).toFixed(1)}% | ${r.passed ? '✅' : '❌'} |`).join('\n')}
+
+            ${report.failures.length > 0 ? '### Failures\n' + report.failures.map(f => `- **${f.prompt_name}**: ${f.reason}`).join('\n') : '### ✅ All prompts passed!'}
+
+            **Threshold**: ${(report.threshold * 100).toFixed(0)}%
+            `;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }

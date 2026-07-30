@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+*.db
+*.sqlite3
+chroma_data/
+.slim/
+.tox/
+.pytest_cache/
+.ruff_cache/
+*.log
